@@ -379,91 +379,99 @@
             document.body.appendChild(script);
         }
 
-        function parseAndRenderCalendar(icsData) {
-                    try {
-                        if (typeof ICAL === 'undefined') return;
+function parseAndRenderCalendar(icsData) {
+            try {
+                if (typeof ICAL === 'undefined') return;
 
-                        var jcalData = ICAL.parse(icsData);
-                        var comp = new ICAL.Component(jcalData);
-                        var vevents = comp.getAllSubcomponents('vevent');
+                var jcalData = ICAL.parse(icsData);
+                var comp = new ICAL.Component(jcalData);
+                var vevents = comp.getAllSubcomponents('vevent');
 
-                        var now = new Date();
-                        var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                var now = new Date();
+                var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-                        var events = [];
+                var events = [];
 
-                        vevents.forEach(function(vevent) {
-                            var event = new ICAL.Event(vevent);
-                            
-                            // --- FILTRES DE MASQUAGE ---
-                            var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
-                            var calName = calNameProp ? calNameProp : 'Agenda';
+                vevents.forEach(function(vevent) {
+                    var event = new ICAL.Event(vevent);
+                    
+                    // --- FILTRES DE MASQUAGE ---
+                    var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
+                    var calName = calNameProp ? calNameProp : 'Agenda';
 
-                            // 1. On bloque l'agenda des Numéros de semaine
-                            if (calName.includes("Numéros de semaine") || (event.summary && event.summary.startsWith('Semaine ') && event.summary.includes(' de '))) {
-                                return; 
-                            }
-                            // ---------------------------
-
-                            // 2. Renommer proprement l'agenda des jours fériés
-                            if (calName.includes("Jours fériés")) {
-                                calName = "FÉRIÉS FÊTES";
-                            }
-
-                            var isAllDay = event.startDate.isDate;
-                            
-                            var startJS, endJS;
-
-                            if (isAllDay) {
-                                // Lecture directe et stricte de la date de l'agenda sans conversion UTC
-                                var s = event.startDate;
-                                startJS = new Date(s.year, s.month - 1, s.day);
-
-                                var e = event.endDate;
-                                var endDateObj = new Date(e.year, e.month - 1, e.day);
-                                endDateObj.setDate(endDateObj.getDate() - 1);
-                                endJS = endDateObj;
-                            } else {
-                                startJS = event.startDate.toJSDate();
-                                endJS = event.endDate ? event.endDate.toJSDate() : new Date(startJS.getTime() + 86400000);
-                            }
-
-                            var cur = new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate());
-                            var end = new Date(endJS.getFullYear(), endJS.getMonth(), endJS.getDate());
-
-                            if (isAllDay) {
-                                while (cur <= end) {
-                                    if (cur >= todayStart) {
-                                        events.push({
-                                            summary: event.summary,
-                                            startDate: new Date(cur.getTime()),
-                                            isAllDay: true,
-                                            calendarName: calName
-                                        });
-                                    }
-                                    cur.setDate(cur.getDate() + 1);
-                                }
-                            } else {
-                                while (cur <= end) {
-                                    if (cur >= todayStart) {
-                                        events.push({
-                                            summary: event.summary,
-                                            startDate: (cur.getTime() === new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate()).getTime()) ? startJS : new Date(cur.getTime()),
-                                            isAllDay: false,
-                                            calendarName: calName
-                                        });
-                                    }
-                                    cur.setDate(cur.getDate() + 1);
-                                }
-                            }
-                        });
-
-                        events.sort(function(a, b) { return a.startDate - b.startDate; });
-                        renderCalendarEvents(events);
-                    } catch (e) {
-                        console.error("Erreur iCal:", e);
+                    // 1. On bloque l'agenda des Numéros de semaine
+                    if (calName.includes("Numéros de semaine") || (event.summary && event.summary.startsWith('Semaine ') && event.summary.includes(' de '))) {
+                        return; 
                     }
-                }
+
+                    // 2. Renommer proprement l'agenda des jours fériés
+                    if (calName.includes("Jours fériés")) {
+                        calName = "FÉRIÉS FÊTES";
+                    }
+
+                    var isAllDay = event.startDate.isDate;
+                    var startJS, endJS;
+
+                    if (isAllDay) {
+                        var s = event.startDate;
+                        
+                        // ASTUCE CRUCIALE : On fixe l'heure à 12h00 (Midi) au lieu de 00h00.
+                        // Cela empêche la date de basculer au jour précédent à cause des fuseaux horaires !
+                        startJS = new Date(s.year, s.month - 1, s.day, 12, 0, 0);
+
+                        var e = event.endDate;
+                        if (e) {
+                            var endDateObj = new Date(e.year, e.month - 1, e.day, 12, 0, 0);
+                            // On exclut le jour de fin qui est géré comme "+1 exclusif" par le format iCal
+                            if (endDateObj > startJS) {
+                                endDateObj.setDate(endDateObj.getDate() - 1);
+                            }
+                            endJS = endDateObj;
+                        } else {
+                            endJS = new Date(startJS.getTime());
+                        }
+                    } else {
+                        startJS = event.startDate.toJSDate();
+                        endJS = event.endDate ? event.endDate.toJSDate() : new Date(startJS.getTime() + 86400000);
+                    }
+
+                    // On extrait les limites "minuit" de début et de fin pour itérer facilement les jours
+                    var cur = new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate());
+                    var end = new Date(endJS.getFullYear(), endJS.getMonth(), endJS.getDate());
+
+                    while (cur <= end) {
+                        if (cur >= todayStart) {
+                            var eventDate;
+                            
+                            if (isAllDay) {
+                                // On maintient l'événement AllDay au jour exact, à 12h00
+                                eventDate = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 12, 0, 0);
+                            } else {
+                                // On garde l'heure normale pour les autres événements
+                                if (cur.getTime() === new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate()).getTime()) {
+                                    eventDate = new Date(startJS.getTime());
+                                } else {
+                                    eventDate = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 0, 0, 0);
+                                }
+                            }
+
+                            events.push({
+                                summary: event.summary,
+                                startDate: eventDate,
+                                isAllDay: isAllDay,
+                                calendarName: calName
+                            });
+                        }
+                        cur.setDate(cur.getDate() + 1);
+                    }
+                });
+
+                events.sort(function(a, b) { return a.startDate - b.startDate; });
+                renderCalendarEvents(events);
+            } catch (e) {
+                console.error("Erreur iCal:", e);
+            }
+        }
 
         // Système d'attribution de couleurs fixes
         var assignedThemes = {
