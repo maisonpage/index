@@ -380,93 +380,157 @@
         }
 
 function parseAndRenderCalendar(icsData) {
-            try {
-                if (typeof ICAL === 'undefined') return;
+    try {
+        if (typeof ICAL === 'undefined') return;
 
-                var jcalData = ICAL.parse(icsData);
-                var comp = new ICAL.Component(jcalData);
-                var vevents = comp.getAllSubcomponents('vevent');
+        var jcalData = ICAL.parse(icsData);
+        var comp = new ICAL.Component(jcalData);
+        var vevents = comp.getAllSubcomponents('vevent');
 
-                var now = new Date();
-                var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        // Date actuelle locale, sans conversion UTC
+        var now = new Date();
+        var todayKey =
+            now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0');
 
-                var events = [];
+        var events = [];
 
-                vevents.forEach(function(vevent) {
-                    var event = new ICAL.Event(vevent);
-                    
-                    // --- FILTRES DE MASQUAGE ---
-                    var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
-                    var calName = calNameProp ? calNameProp : 'Agenda';
+        vevents.forEach(function(vevent) {
+            var event = new ICAL.Event(vevent);
 
-                    if (calName.includes("Numéros de semaine") || (event.summary && event.summary.startsWith('Semaine ') && event.summary.includes(' de '))) {
-                        return; 
-                    }
+            // --- NOM DU CALENDRIER ---
+            var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
+            var calName = calNameProp ? calNameProp : 'Agenda';
 
-                    if (calName.includes("Jours fériés")) {
-                        calName = "FÉRIÉS FÊTES";
-                    }
-
-                    var isAllDay = event.startDate.isDate;
-                    var startJS, endJS;
-
-if (isAllDay) {
-    // Pour une date iCal sans heure, on utilise directement
-    // année / mois / jour afin d'éviter tout décalage de fuseau horaire.
-
-    startJS = new Date(
-        event.startDate.year,
-        event.startDate.month - 1,
-        event.startDate.day
-    );
-
-    if (event.endDate) {
-        // En iCal, la date de fin d'un événement "toute la journée"
-        // est exclusive.
-        endJS = new Date(
-            event.endDate.year,
-            event.endDate.month - 1,
-            event.endDate.day - 1
-        );
-    } else {
-        endJS = new Date(
-            event.startDate.year,
-            event.startDate.month - 1,
-            event.startDate.day
-        );
-    }
-
-} else {
-    // Pour les événements avec une heure, on conserve la conversion
-    // normale en Date JavaScript.
-    startJS = event.startDate.toJSDate();
-    endJS = event.endDate
-        ? event.endDate.toJSDate()
-        : new Date(startJS.getTime() + 86400000);
-}
-
-                    var cur = new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate());
-                    var end = new Date(endJS.getFullYear(), endJS.getMonth(), endJS.getDate());
-
-                    while (cur <= end) {
-                        if (cur >= todayStart) {
-                            events.push({
-                                summary: event.summary,
-                                startDate: new Date(cur.getTime()),
-                                isAllDay: isAllDay,
-                                calendarName: calName
-                            });
-                        }
-                        cur.setDate(cur.getDate() + 1);
-                    }
-                });
-
-                events.sort(function(a, b) { return a.startDate - b.startDate; });
-                renderCalendarEvents(events);
-            } catch (e) {
-                console.error("Erreur iCal:", e);
+            // --- FILTRES ---
+            if (
+                calName.includes("Numéros de semaine") ||
+                (event.summary &&
+                 event.summary.startsWith('Semaine ') &&
+                 event.summary.includes(' de '))
+            ) {
+                return;
             }
-        }
+
+            if (calName.includes("Jours fériés")) {
+                calName = "FÉRIÉS FÊTES";
+            }
+
+            var isAllDay = event.startDate.isDate;
+
+            var start = event.startDate;
+            var end = event.endDate;
+
+            // --------------------------------------------------
+            // EVENEMENT TOUTE LA JOURNEE
+            // --------------------------------------------------
+            if (isAllDay) {
+
+                var startDateObj = new Date(
+                    start.year,
+                    start.month - 1,
+                    start.day
+                );
+
+                // iCal utilise une fin EXCLUSIVE
+                var endDateObj;
+
+                if (end) {
+                    endDateObj = new Date(
+                        end.year,
+                        end.month - 1,
+                        end.day
+                    );
+                    endDateObj.setDate(endDateObj.getDate() - 1);
+                } else {
+                    endDateObj = new Date(
+                        start.year,
+                        start.month - 1,
+                        start.day
+                    );
+                }
+
+                var cur = new Date(
+                    startDateObj.getFullYear(),
+                    startDateObj.getMonth(),
+                    startDateObj.getDate()
+                );
+
+                while (cur <= endDateObj) {
+
+                    var dateKey =
+                        cur.getFullYear() + '-' +
+                        String(cur.getMonth() + 1).padStart(2, '0') + '-' +
+                        String(cur.getDate()).padStart(2, '0');
+
+                    if (dateKey >= todayKey) {
+                        events.push({
+                            summary: event.summary,
+                            year: cur.getFullYear(),
+                            month: cur.getMonth(),
+                            day: cur.getDate(),
+                            hour: null,
+                            minute: null,
+                            isAllDay: true,
+                            calendarName: calName
+                        });
+                    }
+
+                    cur.setDate(cur.getDate() + 1);
+                }
+
+            // --------------------------------------------------
+            // EVENEMENT AVEC HEURE
+            // --------------------------------------------------
+            } else {
+
+                events.push({
+                    summary: event.summary,
+
+                    // IMPORTANT :
+                    // On récupère directement les valeurs iCal
+                    // sans passer par toJSDate()
+                    year: start.year,
+                    month: start.month - 1,
+                    day: start.day,
+                    hour: start.hour || 0,
+                    minute: start.minute || 0,
+
+                    isAllDay: false,
+                    calendarName: calName
+                });
+            }
+        });
+
+        // Tri chronologique
+        events.sort(function(a, b) {
+
+            var dateA = new Date(
+                a.year,
+                a.month,
+                a.day,
+                a.hour || 0,
+                a.minute || 0
+            );
+
+            var dateB = new Date(
+                b.year,
+                b.month,
+                b.day,
+                b.hour || 0,
+                b.minute || 0
+            );
+
+            return dateA - dateB;
+        });
+
+        renderCalendarEvents(events);
+
+    } catch (e) {
+        console.error("Erreur iCal:", e);
+    }
+}
 
         // Système d'attribution de couleurs fixes
         var assignedThemes = {
@@ -488,54 +552,101 @@ if (isAllDay) {
             return assignedThemes[name];
         }
 
-        function renderCalendarEvents(events) {
-            var container = document.getElementById('calendar-container');
-            container.innerHTML = '';
+function renderCalendarEvents(events) {
+    var container = document.getElementById('calendar-container');
+    container.innerHTML = '';
 
-            if (events.length === 0) {
-                container.innerHTML = '<p style="padding:20px; color:#a0a5b5;">Aucun événement à venir.</p>';
-                return;
+    if (events.length === 0) {
+        container.innerHTML =
+            '<p style="padding:20px; color:#a0a5b5;">Aucun événement à venir.</p>';
+        return;
+    }
+
+    var grouped = {};
+
+    events.forEach(function(ev) {
+
+        var dateObj = new Date(
+            ev.year,
+            ev.month,
+            ev.day
+        );
+
+        var dateKey =
+            dateObj.getFullYear() + '-' +
+            String(dateObj.getMonth() + 1).padStart(2, '0') + '-' +
+            String(dateObj.getDate()).padStart(2, '0');
+
+        var dateTitle = dateObj.toLocaleDateString(
+            'fr-FR',
+            {
+                day: 'numeric',
+                month: 'long',
+                weekday: 'long'
             }
+        );
 
-            var grouped = {};
-            events.forEach(function(ev) {
-                var dateKey = ev.startDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', weekday: 'long' });
-                if (!grouped[dateKey]) grouped[dateKey] = [];
-                grouped[dateKey].push(ev);
-            });
-
-            for (var dateTitle in grouped) {
-                var dayGroup = document.createElement('div');
-                dayGroup.className = 'day-group';
-
-                var dayHeader = '<div class="day-header"><span class="day-name">' + dateTitle + '</span></div>';
-                var eventsHTML = '';
-
-                grouped[dateTitle].forEach(function(ev) {
-                    // On attribue le thème en fonction du nom du calendrier
-                    var themeClass = getThemeForCalendar(ev.calendarName);
-                    var timeStr = 'Toute la journée';
-
-                    if (!ev.isAllDay) {
-                        var h = String(ev.startDate.getHours()).padStart(2, '0');
-                        var m = String(ev.startDate.getMinutes()).padStart(2, '0');
-                        timeStr = h + ':' + m;
-                    }
-
-                    // Structure HTML avec le badge à gauche
-                    eventsHTML += '<div class="event-row ' + themeClass + '">' +
-                        '<div class="cal-badge">' + escapeHTML(ev.calendarName) + '</div>' +
-                        '<div class="event-card">' +
-                            '<div class="event-time">' + timeStr + '</div>' +
-                            '<div class="event-title">' + escapeHTML(ev.summary) + '</div>' +
-                        '</div>' +
-                    '</div>';
-                });
-
-                dayGroup.innerHTML = dayHeader + eventsHTML;
-                container.appendChild(dayGroup);
-            }
+        if (!grouped[dateKey]) {
+            grouped[dateKey] = {
+                title: dateTitle,
+                events: []
+            };
         }
+
+        grouped[dateKey].events.push(ev);
+    });
+
+    for (var dateKey in grouped) {
+
+        var dayGroup = document.createElement('div');
+        dayGroup.className = 'day-group';
+
+        var dayHeader =
+            '<div class="day-header">' +
+                '<span class="day-name">' +
+                    grouped[dateKey].title +
+                '</span>' +
+            '</div>';
+
+        var eventsHTML = '';
+
+        grouped[dateKey].events.forEach(function(ev) {
+
+            var themeClass = getThemeForCalendar(ev.calendarName);
+
+            var timeStr = 'Toute la journée';
+
+            if (!ev.isAllDay) {
+                timeStr =
+                    String(ev.hour).padStart(2, '0') +
+                    ':' +
+                    String(ev.minute).padStart(2, '0');
+            }
+
+            eventsHTML +=
+                '<div class="event-row ' + themeClass + '">' +
+                    '<div class="cal-badge">' +
+                        escapeHTML(ev.calendarName) +
+                    '</div>' +
+
+                    '<div class="event-card">' +
+
+                        '<div class="event-time">' +
+                            timeStr +
+                        '</div>' +
+
+                        '<div class="event-title">' +
+                            escapeHTML(ev.summary) +
+                        '</div>' +
+
+                    '</div>' +
+                '</div>';
+        });
+
+        dayGroup.innerHTML = dayHeader + eventsHTML;
+        container.appendChild(dayGroup);
+    }
+}
 
         // --- 5. INITIALISATION ET GESTION DES RAFRAÎCHISSEMENTS ---
         fetchWeather();
