@@ -404,25 +404,35 @@ function parseAndRenderCalendar(icsData) {
                         return; 
                     }
 
-                    // 2. Renommer proprement l'agenda des jours fériés
+// 2. Renommer proprement l'agenda des jours fériés
                     if (calName.includes("Jours fériés")) {
                         calName = "FÉRIÉS FÊTES";
                     }
 
+                    // --- LE CORRECTIF DU DÉCALAGE APPS SCRIPT ---
+                    // On identifie spécifiquement les agendas générés par Google
+                    var isAutoCalendar = (calName === "Anniversaires" || calName === "FÉRIÉS FÊTES");
+                    
                     var isAllDay = event.startDate.isDate;
+                    if (isAutoCalendar) {
+                        isAllDay = true; // Sécurité : on force le mode "Toute la journée"
+                    }
+
                     var startJS, endJS;
 
                     if (isAllDay) {
                         var s = event.startDate;
                         
-                        // ASTUCE CRUCIALE : On fixe l'heure à 12h00 (Midi) au lieu de 00h00.
-                        // Cela empêche la date de basculer au jour précédent à cause des fuseaux horaires !
-                        startJS = new Date(s.year, s.month - 1, s.day, 12, 0, 0);
+                        // Si c'est un agenda auto, on ajoute +1 jour pour compenser le fuseau horaire US du script
+                        var dayOffset = isAutoCalendar ? 1 : 0;
+
+                        // Le "+ dayOffset" corrige la date. On fixe l'heure à 12h00 pour la stabilité.
+                        // (Note : le Javascript gère automatiquement les fins de mois, ex: 31 + 1 = 1er du mois suivant)
+                        startJS = new Date(s.year, s.month - 1, s.day + dayOffset, 12, 0, 0);
 
                         var e = event.endDate;
                         if (e) {
-                            var endDateObj = new Date(e.year, e.month - 1, e.day, 12, 0, 0);
-                            // On exclut le jour de fin qui est géré comme "+1 exclusif" par le format iCal
+                            var endDateObj = new Date(e.year, e.month - 1, e.day + dayOffset, 12, 0, 0);
                             if (endDateObj > startJS) {
                                 endDateObj.setDate(endDateObj.getDate() - 1);
                             }
@@ -434,26 +444,6 @@ function parseAndRenderCalendar(icsData) {
                         startJS = event.startDate.toJSDate();
                         endJS = event.endDate ? event.endDate.toJSDate() : new Date(startJS.getTime() + 86400000);
                     }
-
-                    // On extrait les limites "minuit" de début et de fin pour itérer facilement les jours
-                    var cur = new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate());
-                    var end = new Date(endJS.getFullYear(), endJS.getMonth(), endJS.getDate());
-
-                    while (cur <= end) {
-                        if (cur >= todayStart) {
-                            var eventDate;
-                            
-                            if (isAllDay) {
-                                // On maintient l'événement AllDay au jour exact, à 12h00
-                                eventDate = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 12, 0, 0);
-                            } else {
-                                // On garde l'heure normale pour les autres événements
-                                if (cur.getTime() === new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate()).getTime()) {
-                                    eventDate = new Date(startJS.getTime());
-                                } else {
-                                    eventDate = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 0, 0, 0);
-                                }
-                            }
 
                             events.push({
                                 summary: event.summary,
