@@ -410,19 +410,40 @@ function parseAndRenderCalendar(icsData) {
                     var isAllDay = event.startDate.isDate;
                     var startJS, endJS;
 
-                    if (isAllDay) {
-                        // Utilisation de la méthode officielle d'iCal.js pour convertir en date JS brute
-                        var s = event.startDate.toJSDate();
-                        startJS = new Date(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate());
+if (isAllDay) {
+    // Pour une date iCal sans heure, on utilise directement
+    // année / mois / jour afin d'éviter tout décalage de fuseau horaire.
 
-                        var e = event.endDate ? event.endDate.toJSDate() : new Date(s.getTime() + 86400000);
-                        var endJSObj = new Date(e.getUTCFullYear(), e.getUTCMonth(), e.getUTCDate());
-                        endJSObj.setDate(endJSObj.getDate() - 1); // Exclusion de la date de fin exclusive iCal
-                        endJS = endJSObj;
-                    } else {
-                        startJS = event.startDate.toJSDate();
-                        endJS = event.endDate ? event.endDate.toJSDate() : new Date(startJS.getTime() + 86400000);
-                    }
+    startJS = new Date(
+        event.startDate.year,
+        event.startDate.month - 1,
+        event.startDate.day
+    );
+
+    if (event.endDate) {
+        // En iCal, la date de fin d'un événement "toute la journée"
+        // est exclusive.
+        endJS = new Date(
+            event.endDate.year,
+            event.endDate.month - 1,
+            event.endDate.day - 1
+        );
+    } else {
+        endJS = new Date(
+            event.startDate.year,
+            event.startDate.month - 1,
+            event.startDate.day
+        );
+    }
+
+} else {
+    // Pour les événements avec une heure, on conserve la conversion
+    // normale en Date JavaScript.
+    startJS = event.startDate.toJSDate();
+    endJS = event.endDate
+        ? event.endDate.toJSDate()
+        : new Date(startJS.getTime() + 86400000);
+}
 
                     var cur = new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate());
                     var end = new Date(endJS.getFullYear(), endJS.getMonth(), endJS.getDate());
