@@ -387,12 +387,33 @@ function parseAndRenderCalendar(icsData) {
         var comp = new ICAL.Component(jcalData);
         var vevents = comp.getAllSubcomponents('vevent');
 
-        // Date actuelle locale, sans conversion UTC
+        // Aujourd'hui en Europe/Paris
         var now = new Date();
-        var todayKey =
-            now.getFullYear() + '-' +
-            String(now.getMonth() + 1).padStart(2, '0') + '-' +
-            String(now.getDate()).padStart(2, '0');
+
+        var parisTodayParts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Europe/Paris',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).formatToParts(now);
+
+        var todayYear = parseInt(
+            parisTodayParts.find(p => p.type === 'year').value
+        );
+
+        var todayMonth = parseInt(
+            parisTodayParts.find(p => p.type === 'month').value
+        );
+
+        var todayDay = parseInt(
+            parisTodayParts.find(p => p.type === 'day').value
+        );
+
+        var todayStart = new Date(
+            todayYear,
+            todayMonth - 1,
+            todayDay
+        );
 
         var events = [];
 
@@ -406,9 +427,11 @@ function parseAndRenderCalendar(icsData) {
             // --- FILTRES ---
             if (
                 calName.includes("Numéros de semaine") ||
-                (event.summary &&
-                 event.summary.startsWith('Semaine ') &&
-                 event.summary.includes(' de '))
+                (
+                    event.summary &&
+                    event.summary.startsWith('Semaine ') &&
+                    event.summary.includes(' de ')
+                )
             ) {
                 return;
             }
@@ -419,59 +442,45 @@ function parseAndRenderCalendar(icsData) {
 
             var isAllDay = event.startDate.isDate;
 
-            var start = event.startDate;
-            var end = event.endDate;
-
-            // --------------------------------------------------
-            // EVENEMENT TOUTE LA JOURNEE
-            // --------------------------------------------------
+            // =====================================================
+            // ÉVÉNEMENT "TOUTE LA JOURNÉE"
+            // =====================================================
             if (isAllDay) {
 
-                var startDateObj = new Date(
-                    start.year,
-                    start.month - 1,
-                    start.day
+                var startJS = new Date(
+                    event.startDate.year,
+                    event.startDate.month - 1,
+                    event.startDate.day
                 );
 
-                // iCal utilise une fin EXCLUSIVE
-                var endDateObj;
+                var endJS;
 
-                if (end) {
-                    endDateObj = new Date(
-                        end.year,
-                        end.month - 1,
-                        end.day
+                if (event.endDate) {
+                    endJS = new Date(
+                        event.endDate.year,
+                        event.endDate.month - 1,
+                        event.endDate.day
                     );
-                    endDateObj.setDate(endDateObj.getDate() - 1);
+
+                    // La fin iCal est exclusive
+                    endJS.setDate(endJS.getDate() - 1);
+
                 } else {
-                    endDateObj = new Date(
-                        start.year,
-                        start.month - 1,
-                        start.day
-                    );
+                    endJS = new Date(startJS.getTime());
                 }
 
                 var cur = new Date(
-                    startDateObj.getFullYear(),
-                    startDateObj.getMonth(),
-                    startDateObj.getDate()
+                    startJS.getFullYear(),
+                    startJS.getMonth(),
+                    startJS.getDate()
                 );
 
-                while (cur <= endDateObj) {
+                while (cur <= endJS) {
 
-                    var dateKey =
-                        cur.getFullYear() + '-' +
-                        String(cur.getMonth() + 1).padStart(2, '0') + '-' +
-                        String(cur.getDate()).padStart(2, '0');
-
-                    if (dateKey >= todayKey) {
+                    if (cur >= todayStart) {
                         events.push({
                             summary: event.summary,
-                            year: cur.getFullYear(),
-                            month: cur.getMonth(),
-                            day: cur.getDate(),
-                            hour: null,
-                            minute: null,
+                            date: new Date(cur.getTime()),
                             isAllDay: true,
                             calendarName: calName
                         });
@@ -480,49 +489,56 @@ function parseAndRenderCalendar(icsData) {
                     cur.setDate(cur.getDate() + 1);
                 }
 
-            // --------------------------------------------------
-            // EVENEMENT AVEC HEURE
-            // --------------------------------------------------
+            // =====================================================
+            // ÉVÉNEMENT AVEC HEURE
+            // =====================================================
             } else {
 
-                events.push({
-                    summary: event.summary,
+                // Ici, SURTOUT ne pas utiliser start.hour.
+                // toJSDate() conserve l'instant réel et son fuseau.
+                var startJS = event.startDate.toJSDate();
 
-                    // IMPORTANT :
-                    // On récupère directement les valeurs iCal
-                    // sans passer par toJSDate()
-                    year: start.year,
-                    month: start.month - 1,
-                    day: start.day,
-                    hour: start.hour || 0,
-                    minute: start.minute || 0,
+                // Pour le filtrage "à partir d'aujourd'hui",
+                // on regarde la date réelle en Europe/Paris.
+                var parisDateParts = new Intl.DateTimeFormat('en-CA', {
+                    timeZone: 'Europe/Paris',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                }).formatToParts(startJS);
 
-                    isAllDay: false,
-                    calendarName: calName
-                });
+                var eventYear = parseInt(
+                    parisDateParts.find(p => p.type === 'year').value
+                );
+
+                var eventMonth = parseInt(
+                    parisDateParts.find(p => p.type === 'month').value
+                );
+
+                var eventDay = parseInt(
+                    parisDateParts.find(p => p.type === 'day').value
+                );
+
+                var eventDateOnly = new Date(
+                    eventYear,
+                    eventMonth - 1,
+                    eventDay
+                );
+
+                if (eventDateOnly >= todayStart) {
+                    events.push({
+                        summary: event.summary,
+                        date: startJS,
+                        isAllDay: false,
+                        calendarName: calName
+                    });
+                }
             }
         });
 
         // Tri chronologique
         events.sort(function(a, b) {
-
-            var dateA = new Date(
-                a.year,
-                a.month,
-                a.day,
-                a.hour || 0,
-                a.minute || 0
-            );
-
-            var dateB = new Date(
-                b.year,
-                b.month,
-                b.day,
-                b.hour || 0,
-                b.minute || 0
-            );
-
-            return dateA - dateB;
+            return a.date - b.date;
         });
 
         renderCalendarEvents(events);
@@ -566,25 +582,55 @@ function renderCalendarEvents(events) {
 
     events.forEach(function(ev) {
 
-        var dateObj = new Date(
-            ev.year,
-            ev.month,
-            ev.day
-        );
+        var dateTitle;
 
-        var dateKey =
-            dateObj.getFullYear() + '-' +
-            String(dateObj.getMonth() + 1).padStart(2, '0') + '-' +
-            String(dateObj.getDate()).padStart(2, '0');
+        if (ev.isAllDay) {
 
-        var dateTitle = dateObj.toLocaleDateString(
-            'fr-FR',
-            {
+            // Les événements toute la journée sont déjà
+            // des dates locales sans fuseau.
+            dateTitle = ev.date.toLocaleDateString('fr-FR', {
                 day: 'numeric',
                 month: 'long',
                 weekday: 'long'
-            }
-        );
+            });
+
+        } else {
+
+            // IMPORTANT :
+            // on force Europe/Paris pour ne pas afficher l'heure UTC.
+            dateTitle = ev.date.toLocaleDateString('fr-FR', {
+                timeZone: 'Europe/Paris',
+                day: 'numeric',
+                month: 'long',
+                weekday: 'long'
+            });
+        }
+
+        // Clé stable pour le regroupement
+        var dateKey;
+
+        if (ev.isAllDay) {
+
+            dateKey =
+                ev.date.getFullYear() + '-' +
+                String(ev.date.getMonth() + 1).padStart(2, '0') + '-' +
+                String(ev.date.getDate()).padStart(2, '0');
+
+        } else {
+
+            var parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Europe/Paris',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).formatToParts(ev.date);
+
+            var y = parts.find(p => p.type === 'year').value;
+            var m = parts.find(p => p.type === 'month').value;
+            var d = parts.find(p => p.type === 'day').value;
+
+            dateKey = y + '-' + m + '-' + d;
+        }
 
         if (!grouped[dateKey]) {
             grouped[dateKey] = {
@@ -617,14 +663,18 @@ function renderCalendarEvents(events) {
             var timeStr = 'Toute la journée';
 
             if (!ev.isAllDay) {
-                timeStr =
-                    String(ev.hour).padStart(2, '0') +
-                    ':' +
-                    String(ev.minute).padStart(2, '0');
+
+                timeStr = ev.date.toLocaleTimeString('fr-FR', {
+                    timeZone: 'Europe/Paris',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
             }
 
             eventsHTML +=
                 '<div class="event-row ' + themeClass + '">' +
+
                     '<div class="cal-badge">' +
                         escapeHTML(ev.calendarName) +
                     '</div>' +
@@ -640,6 +690,7 @@ function renderCalendarEvents(events) {
                         '</div>' +
 
                     '</div>' +
+
                 '</div>';
         });
 
