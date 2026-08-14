@@ -379,163 +379,71 @@
             document.body.appendChild(script);
         }
 
-        function getParisParts(date) {
-            var parts = new Intl.DateTimeFormat('en-CA', {
-                timeZone: 'Europe/Paris',
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                hourCycle: 'h23'
-            }).formatToParts(date);
-
-            var result = {};
-            parts.forEach(function(p) {
-                if (p.type !== 'literal') result[p.type] = p.value;
-            });
-            return result;
-        }
-
-        function getParisTodayKey() {
-            var p = getParisParts(new Date());
-            return p.year + '-' + p.month + '-' + p.day;
-        }
-
-        function formatAllDayDate(year, month, day) {
-            // VALUE=DATE est une date civile, pas un instant UTC.
-            // On crée donc une date locale uniquement pour le formatage.
-            var d = new Date(year, month - 1, day, 12, 0, 0);
-            return d.toLocaleDateString('fr-FR', {
-                day: 'numeric',
-                month: 'long',
-                weekday: 'long'
-            });
-        }
-
-        function dateKeyFromParts(year, month, day) {
-            return String(year) + '-' +
-                String(month).padStart(2, '0') + '-' +
-                String(day).padStart(2, '0');
-        }
-
-        function parseAndRenderCalendar(icsData) {
+function parseAndRenderCalendar(icsData) {
             try {
                 if (typeof ICAL === 'undefined') return;
 
                 var jcalData = ICAL.parse(icsData);
                 var comp = new ICAL.Component(jcalData);
                 var vevents = comp.getAllSubcomponents('vevent');
-                var todayKey = getParisTodayKey();
+
+                var now = new Date();
+                var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
                 var events = [];
 
                 vevents.forEach(function(vevent) {
                     var event = new ICAL.Event(vevent);
-
+                    
                     // --- FILTRES DE MASQUAGE ---
                     var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
                     var calName = calNameProp ? calNameProp : 'Agenda';
 
-                    if (
-                        calName.includes('Numéros de semaine') ||
-                        (event.summary && event.summary.startsWith('Semaine ') && event.summary.includes(' de '))
-                    ) {
-                        return;
+                    if (calName.includes("Numéros de semaine") || (event.summary && event.summary.startsWith('Semaine ') && event.summary.includes(' de '))) {
+                        return; 
                     }
 
-                    if (calName.includes('Jours fériés')) {
-                        calName = 'FÉRIÉS FÊTES';
+                    if (calName.includes("Jours fériés")) {
+                        calName = "FÉRIÉS FÊTES";
                     }
 
                     var isAllDay = event.startDate.isDate;
+                    var startJS, endJS;
 
                     if (isAllDay) {
-                        // =====================================================
-                        // ÉVÉNEMENT VALUE=DATE
-                        // =====================================================
-                        // NE JAMAIS appeler toJSDate() ici.
-                        // Une date VALUE=DATE n'a ni heure ni fuseau horaire.
-                        var startYear = event.startDate.year;
-                        var startMonth = event.startDate.month;
-                        var startDay = event.startDate.day;
+                        // Utilisation de la méthode officielle d'iCal.js pour convertir en date JS brute
+                        var s = event.startDate.toJSDate();
+                        startJS = new Date(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate());
 
-                        var endYear = startYear;
-                        var endMonth = startMonth;
-                        var endDay = startDay + 1;
-
-                        if (event.endDate) {
-                            endYear = event.endDate.year;
-                            endMonth = event.endDate.month;
-                            endDay = event.endDate.day;
-                        }
-
-                        // DTEND est exclusif : on itère jusqu'à la veille.
-                        var cur = new Date(startYear, startMonth - 1, startDay, 12, 0, 0);
-                        var endExclusive = new Date(endYear, endMonth - 1, endDay, 12, 0, 0);
-
-                        while (cur < endExclusive) {
-                            var y = cur.getFullYear();
-                            var m = cur.getMonth() + 1;
-                            var d = cur.getDate();
-                            var key = dateKeyFromParts(y, m, d);
-
-                            if (key >= todayKey) {
-                                events.push({
-                                    summary: event.summary,
-                                    dateKey: key,
-                                    dateTitle: formatAllDayDate(y, m, d),
-                                    isAllDay: true,
-                                    calendarName: calName,
-                                    sortValue: key + 'T00:00:00'
-                                });
-                            }
-
-                            cur.setDate(cur.getDate() + 1);
-                        }
-
+                        var e = event.endDate ? event.endDate.toJSDate() : new Date(s.getTime() + 86400000);
+                        var endJSObj = new Date(e.getUTCFullYear(), e.getUTCMonth(), e.getUTCDate());
+                        endJSObj.setDate(endJSObj.getDate() - 1); // Exclusion de la date de fin exclusive iCal
+                        endJS = endJSObj;
                     } else {
-                        // =====================================================
-                        // ÉVÉNEMENT AVEC HEURE
-                        // =====================================================
-                        // Ici, toJSDate() est correct : l'événement représente
-                        // un instant réel. L'affichage sera ensuite forcé en
-                        // Europe/Paris.
-                        var startJS = event.startDate.toJSDate();
-                        var paris = getParisParts(startJS);
-                        var key = dateKeyFromParts(paris.year, paris.month, paris.day);
+                        startJS = event.startDate.toJSDate();
+                        endJS = event.endDate ? event.endDate.toJSDate() : new Date(startJS.getTime() + 86400000);
+                    }
 
-                        if (key >= todayKey) {
+                    var cur = new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate());
+                    var end = new Date(endJS.getFullYear(), endJS.getMonth(), endJS.getDate());
+
+                    while (cur <= end) {
+                        if (cur >= todayStart) {
                             events.push({
                                 summary: event.summary,
-                                date: startJS,
-                                dateKey: key,
-                                dateTitle: new Date(
-                                    Number(paris.year),
-                                    Number(paris.month) - 1,
-                                    Number(paris.day),
-                                    12, 0, 0
-                                ).toLocaleDateString('fr-FR', {
-                                    day: 'numeric',
-                                    month: 'long',
-                                    weekday: 'long'
-                                }),
-                                isAllDay: false,
-                                calendarName: calName,
-                                sortValue: startJS.getTime()
+                                startDate: new Date(cur.getTime()),
+                                isAllDay: isAllDay,
+                                calendarName: calName
                             });
                         }
+                        cur.setDate(cur.getDate() + 1);
                     }
                 });
 
-                events.sort(function(a, b) {
-                    return a.sortValue < b.sortValue ? -1 :
-                           a.sortValue > b.sortValue ? 1 : 0;
-                });
-
+                events.sort(function(a, b) { return a.startDate - b.startDate; });
                 renderCalendarEvents(events);
-
             } catch (e) {
-                console.error('Erreur iCal:', e);
+                console.error("Erreur iCal:", e);
             }
         }
 
@@ -559,136 +467,54 @@
             return assignedThemes[name];
         }
 
-function renderCalendarEvents(events) {
-    var container = document.getElementById('calendar-container');
-    container.innerHTML = '';
+        function renderCalendarEvents(events) {
+            var container = document.getElementById('calendar-container');
+            container.innerHTML = '';
 
-    if (events.length === 0) {
-        container.innerHTML =
-            '<p style="padding:20px; color:#a0a5b5;">Aucun événement à venir.</p>';
-        return;
-    }
-
-    var grouped = {};
-
-    events.forEach(function(ev) {
-
-        var dateTitle;
-
-        if (ev.isAllDay) {
-
-            // Les événements toute la journée sont déjà
-            // des dates locales sans fuseau.
-            dateTitle = ev.date.toLocaleDateString('fr-FR', {
-                day: 'numeric',
-                month: 'long',
-                weekday: 'long'
-            });
-
-        } else {
-
-            // IMPORTANT :
-            // on force Europe/Paris pour ne pas afficher l'heure UTC.
-            dateTitle = ev.date.toLocaleDateString('fr-FR', {
-                timeZone: 'Europe/Paris',
-                day: 'numeric',
-                month: 'long',
-                weekday: 'long'
-            });
-        }
-
-        // Clé stable pour le regroupement
-        var dateKey;
-
-        if (ev.isAllDay) {
-
-            dateKey =
-                ev.date.getFullYear() + '-' +
-                String(ev.date.getMonth() + 1).padStart(2, '0') + '-' +
-                String(ev.date.getDate()).padStart(2, '0');
-
-        } else {
-
-            var parts = new Intl.DateTimeFormat('en-CA', {
-                timeZone: 'Europe/Paris',
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit'
-            }).formatToParts(ev.date);
-
-            var y = parts.find(p => p.type === 'year').value;
-            var m = parts.find(p => p.type === 'month').value;
-            var d = parts.find(p => p.type === 'day').value;
-
-            dateKey = y + '-' + m + '-' + d;
-        }
-
-        if (!grouped[dateKey]) {
-            grouped[dateKey] = {
-                title: dateTitle,
-                events: []
-            };
-        }
-
-        grouped[dateKey].events.push(ev);
-    });
-
-    for (var dateKey in grouped) {
-
-        var dayGroup = document.createElement('div');
-        dayGroup.className = 'day-group';
-
-        var dayHeader =
-            '<div class="day-header">' +
-                '<span class="day-name">' +
-                    grouped[dateKey].title +
-                '</span>' +
-            '</div>';
-
-        var eventsHTML = '';
-
-        grouped[dateKey].events.forEach(function(ev) {
-
-            var themeClass = getThemeForCalendar(ev.calendarName);
-
-            var timeStr = 'Toute la journée';
-
-            if (!ev.isAllDay) {
-
-                timeStr = ev.date.toLocaleTimeString('fr-FR', {
-                    timeZone: 'Europe/Paris',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: false
-                });
+            if (events.length === 0) {
+                container.innerHTML = '<p style="padding:20px; color:#a0a5b5;">Aucun événement à venir.</p>';
+                return;
             }
 
-            eventsHTML +=
-                '<div class="event-row ' + themeClass + '">' +
+            var grouped = {};
+            events.forEach(function(ev) {
+                var dateKey = ev.startDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', weekday: 'long' });
+                if (!grouped[dateKey]) grouped[dateKey] = [];
+                grouped[dateKey].push(ev);
+            });
 
-                    '<div class="cal-badge">' +
-                        escapeHTML(ev.calendarName) +
-                    '</div>' +
+            for (var dateTitle in grouped) {
+                var dayGroup = document.createElement('div');
+                dayGroup.className = 'day-group';
 
-                    '<div class="event-card">' +
+                var dayHeader = '<div class="day-header"><span class="day-name">' + dateTitle + '</span></div>';
+                var eventsHTML = '';
 
-                        '<div class="event-time">' +
-                            timeStr +
+                grouped[dateTitle].forEach(function(ev) {
+                    // On attribue le thème en fonction du nom du calendrier
+                    var themeClass = getThemeForCalendar(ev.calendarName);
+                    var timeStr = 'Toute la journée';
+
+                    if (!ev.isAllDay) {
+                        var h = String(ev.startDate.getHours()).padStart(2, '0');
+                        var m = String(ev.startDate.getMinutes()).padStart(2, '0');
+                        timeStr = h + ':' + m;
+                    }
+
+                    // Structure HTML avec le badge à gauche
+                    eventsHTML += '<div class="event-row ' + themeClass + '">' +
+                        '<div class="cal-badge">' + escapeHTML(ev.calendarName) + '</div>' +
+                        '<div class="event-card">' +
+                            '<div class="event-time">' + timeStr + '</div>' +
+                            '<div class="event-title">' + escapeHTML(ev.summary) + '</div>' +
                         '</div>' +
+                    '</div>';
+                });
 
-                        '<div class="event-title">' +
-                            escapeHTML(ev.summary) +
-                        '</div>' +
-
-                    '</div>' +
-
-                '</div>';
-        });
-
-        dayGroup.innerHTML = dayHeader + eventsHTML;
-        container.appendChild(dayGroup);
-    }
-}
+                dayGroup.innerHTML = dayHeader + eventsHTML;
+                container.appendChild(dayGroup);
+            }
+        }
 
         // --- 5. INITIALISATION ET GESTION DES RAFRAÎCHISSEMENTS ---
         fetchWeather();
