@@ -104,7 +104,7 @@
             flex-shrink: 0;
         }
 
-/* Agenda / Calendrier */
+        /* Agenda / Calendrier */
         .day-group { margin-bottom: 22px; }
         .day-header { margin-bottom: 8px; }
         .day-name { font-size: 1.3rem; color: #ffffff; font-weight: 600; text-transform: capitalize; }
@@ -128,7 +128,6 @@
             font-weight: 500;
             text-align: center;
             color: #ffffff;
-            /* Permet de couper le texte s'il est trop long avec des "..." */
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -171,9 +170,9 @@
         .theme-red .event-time { background: #96281b; }
         .theme-red .event-title { background: #b92c1d; }
 
-        .theme-orange .cal-badge { background: #ffd905; }
-        .theme-orange .event-time { background: #ffda05c0; }
-        .theme-orange .event-title { background: #ffd905; }
+        .theme-orange .cal-badge { background: #ffd905; color: #000; }
+        .theme-orange .event-time { background: #ffda05c0; color: #000; }
+        .theme-orange .event-title { background: #ffd905; color: #000; }
     </style>
 </head>
 <body>
@@ -379,7 +378,7 @@
             document.body.appendChild(script);
         }
 
-function parseAndRenderCalendar(icsData) {
+        function parseAndRenderCalendar(icsData) {
             try {
                 if (typeof ICAL === 'undefined') return;
 
@@ -404,35 +403,23 @@ function parseAndRenderCalendar(icsData) {
                         return; 
                     }
 
-// 2. Renommer proprement l'agenda des jours fériés
+                    // 2. Renommer proprement l'agenda des jours fériés
                     if (calName.includes("Jours fériés")) {
                         calName = "FÉRIÉS FÊTES";
                     }
 
-                    // --- LE CORRECTIF DU DÉCALAGE APPS SCRIPT ---
-                    // On identifie spécifiquement les agendas générés par Google
-                    var isAutoCalendar = (calName === "Anniversaires" || calName === "FÉRIÉS FÊTES");
-                    
                     var isAllDay = event.startDate.isDate;
-                    if (isAutoCalendar) {
-                        isAllDay = true; // Sécurité : on force le mode "Toute la journée"
-                    }
-
                     var startJS, endJS;
 
                     if (isAllDay) {
                         var s = event.startDate;
                         
-                        // Si c'est un agenda auto, on ajoute +1 jour pour compenser le fuseau horaire US du script
-                        var dayOffset = isAutoCalendar ? 1 : 0;
-
-                        // Le "+ dayOffset" corrige la date. On fixe l'heure à 12h00 pour la stabilité.
-                        // (Note : le Javascript gère automatiquement les fins de mois, ex: 31 + 1 = 1er du mois suivant)
-                        startJS = new Date(s.year, s.month - 1, s.day + dayOffset, 12, 0, 0);
+                        // CORRECTION GLOBALE : +1 jour (s.day + 1) pour compenser le décalage du serveur Google Apps Script
+                        startJS = new Date(s.year, s.month - 1, s.day + 1, 12, 0, 0);
 
                         var e = event.endDate;
                         if (e) {
-                            var endDateObj = new Date(e.year, e.month - 1, e.day + dayOffset, 12, 0, 0);
+                            var endDateObj = new Date(e.year, e.month - 1, e.day + 1, 12, 0, 0);
                             if (endDateObj > startJS) {
                                 endDateObj.setDate(endDateObj.getDate() - 1);
                             }
@@ -444,6 +431,24 @@ function parseAndRenderCalendar(icsData) {
                         startJS = event.startDate.toJSDate();
                         endJS = event.endDate ? event.endDate.toJSDate() : new Date(startJS.getTime() + 86400000);
                     }
+
+                    // Boucle d'itération pour les événements sur plusieurs jours
+                    var cur = new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate());
+                    var end = new Date(endJS.getFullYear(), endJS.getMonth(), endJS.getDate());
+
+                    while (cur <= end) {
+                        if (cur >= todayStart) {
+                            var eventDate;
+                            
+                            if (isAllDay) {
+                                eventDate = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 12, 0, 0);
+                            } else {
+                                if (cur.getTime() === new Date(startJS.getFullYear(), startJS.getMonth(), startJS.getDate()).getTime()) {
+                                    eventDate = new Date(startJS.getTime());
+                                } else {
+                                    eventDate = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 0, 0, 0);
+                                }
+                            }
 
                             events.push({
                                 summary: event.summary,
@@ -476,7 +481,6 @@ function parseAndRenderCalendar(icsData) {
 
         function getThemeForCalendar(name) {
             if (!assignedThemes[name]) {
-                // Associe une nouvelle couleur à un nouvel agenda
                 assignedThemes[name] = availableThemes[nextThemeIndex % availableThemes.length];
                 nextThemeIndex++;
             }
@@ -507,7 +511,6 @@ function parseAndRenderCalendar(icsData) {
                 var eventsHTML = '';
 
                 grouped[dateTitle].forEach(function(ev) {
-                    // On attribue le thème en fonction du nom du calendrier
                     var themeClass = getThemeForCalendar(ev.calendarName);
                     var timeStr = 'Toute la journée';
 
@@ -517,7 +520,6 @@ function parseAndRenderCalendar(icsData) {
                         timeStr = h + ':' + m;
                     }
 
-                    // Structure HTML avec le badge à gauche
                     eventsHTML += '<div class="event-row ' + themeClass + '">' +
                         '<div class="cal-badge">' + escapeHTML(ev.calendarName) + '</div>' +
                         '<div class="event-card">' +
@@ -537,7 +539,7 @@ function parseAndRenderCalendar(icsData) {
         fetchGoogleCalendar();
 
         var isTyping = false;
-        var initialLoadTime = Date.now(); // Date de démarrage pour éviter la boucle immédiate
+        var initialLoadTime = Date.now();
 
         var noteInputEl = document.getElementById('note-input');
         if (noteInputEl) {
@@ -545,7 +547,6 @@ function parseAndRenderCalendar(icsData) {
             noteInputEl.addEventListener('blur', function() { isTyping = false; });
         }
 
-        // Rechargement automatique de secours toutes les 15 minutes
         setInterval(function() {
             if (!isTyping) {
                 location.reload();
@@ -553,7 +554,6 @@ function parseAndRenderCalendar(icsData) {
         }, 15 * 60 * 1000);
 
         function refreshDashboardOnWake() {
-            // Ignorer si l'utilisateur tape une note OU si la page vient de charger il y a moins de 10 secondes
             if (isTyping || (Date.now() - initialLoadTime < 10000)) return;
 
             updateClock();
