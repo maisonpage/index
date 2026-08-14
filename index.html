@@ -379,178 +379,165 @@
             document.body.appendChild(script);
         }
 
-function parseAndRenderCalendar(icsData) {
-    try {
-        if (typeof ICAL === 'undefined') return;
+        function getParisParts(date) {
+            var parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Europe/Paris',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hourCycle: 'h23'
+            }).formatToParts(date);
 
-        var jcalData = ICAL.parse(icsData);
-        var comp = new ICAL.Component(jcalData);
-        var vevents = comp.getAllSubcomponents('vevent');
+            var result = {};
+            parts.forEach(function(p) {
+                if (p.type !== 'literal') result[p.type] = p.value;
+            });
+            return result;
+        }
 
-        // Aujourd'hui en Europe/Paris
-        var now = new Date();
+        function getParisTodayKey() {
+            var p = getParisParts(new Date());
+            return p.year + '-' + p.month + '-' + p.day;
+        }
 
-        var parisTodayParts = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'Europe/Paris',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-        }).formatToParts(now);
+        function formatAllDayDate(year, month, day) {
+            // VALUE=DATE est une date civile, pas un instant UTC.
+            // On crée donc une date locale uniquement pour le formatage.
+            var d = new Date(year, month - 1, day, 12, 0, 0);
+            return d.toLocaleDateString('fr-FR', {
+                day: 'numeric',
+                month: 'long',
+                weekday: 'long'
+            });
+        }
 
-        var todayYear = parseInt(
-            parisTodayParts.find(p => p.type === 'year').value
-        );
+        function dateKeyFromParts(year, month, day) {
+            return String(year) + '-' +
+                String(month).padStart(2, '0') + '-' +
+                String(day).padStart(2, '0');
+        }
 
-        var todayMonth = parseInt(
-            parisTodayParts.find(p => p.type === 'month').value
-        );
+        function parseAndRenderCalendar(icsData) {
+            try {
+                if (typeof ICAL === 'undefined') return;
 
-        var todayDay = parseInt(
-            parisTodayParts.find(p => p.type === 'day').value
-        );
+                var jcalData = ICAL.parse(icsData);
+                var comp = new ICAL.Component(jcalData);
+                var vevents = comp.getAllSubcomponents('vevent');
+                var todayKey = getParisTodayKey();
+                var events = [];
 
-        var todayStart = new Date(
-            todayYear,
-            todayMonth - 1,
-            todayDay
-        );
+                vevents.forEach(function(vevent) {
+                    var event = new ICAL.Event(vevent);
 
-        var events = [];
+                    // --- FILTRES DE MASQUAGE ---
+                    var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
+                    var calName = calNameProp ? calNameProp : 'Agenda';
 
-        vevents.forEach(function(vevent) {
-            var event = new ICAL.Event(vevent);
-            console.log(
-    event.summary,
-    vevent.toString()
-);
-
-            // --- NOM DU CALENDRIER ---
-            var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
-            var calName = calNameProp ? calNameProp : 'Agenda';
-
-            // --- FILTRES ---
-            if (
-                calName.includes("Numéros de semaine") ||
-                (
-                    event.summary &&
-                    event.summary.startsWith('Semaine ') &&
-                    event.summary.includes(' de ')
-                )
-            ) {
-                return;
-            }
-
-            if (calName.includes("Jours fériés")) {
-                calName = "FÉRIÉS FÊTES";
-            }
-
-            var isAllDay = event.startDate.isDate;
-
-            // =====================================================
-            // ÉVÉNEMENT "TOUTE LA JOURNÉE"
-            // =====================================================
-            if (isAllDay) {
-
-                var startJS = new Date(
-                    event.startDate.year,
-                    event.startDate.month - 1,
-                    event.startDate.day
-                );
-
-                var endJS;
-
-                if (event.endDate) {
-                    endJS = new Date(
-                        event.endDate.year,
-                        event.endDate.month - 1,
-                        event.endDate.day
-                    );
-
-                    // La fin iCal est exclusive
-                    endJS.setDate(endJS.getDate() - 1);
-
-                } else {
-                    endJS = new Date(startJS.getTime());
-                }
-
-                var cur = new Date(
-                    startJS.getFullYear(),
-                    startJS.getMonth(),
-                    startJS.getDate()
-                );
-
-                while (cur <= endJS) {
-
-                    if (cur >= todayStart) {
-                        events.push({
-                            summary: event.summary,
-                            date: new Date(cur.getTime()),
-                            isAllDay: true,
-                            calendarName: calName
-                        });
+                    if (
+                        calName.includes('Numéros de semaine') ||
+                        (event.summary && event.summary.startsWith('Semaine ') && event.summary.includes(' de '))
+                    ) {
+                        return;
                     }
 
-                    cur.setDate(cur.getDate() + 1);
-                }
+                    if (calName.includes('Jours fériés')) {
+                        calName = 'FÉRIÉS FÊTES';
+                    }
 
-            // =====================================================
-            // ÉVÉNEMENT AVEC HEURE
-            // =====================================================
-            } else {
+                    var isAllDay = event.startDate.isDate;
 
-                // Ici, SURTOUT ne pas utiliser start.hour.
-                // toJSDate() conserve l'instant réel et son fuseau.
-                var startJS = event.startDate.toJSDate();
+                    if (isAllDay) {
+                        // =====================================================
+                        // ÉVÉNEMENT VALUE=DATE
+                        // =====================================================
+                        // NE JAMAIS appeler toJSDate() ici.
+                        // Une date VALUE=DATE n'a ni heure ni fuseau horaire.
+                        var startYear = event.startDate.year;
+                        var startMonth = event.startDate.month;
+                        var startDay = event.startDate.day;
 
-                // Pour le filtrage "à partir d'aujourd'hui",
-                // on regarde la date réelle en Europe/Paris.
-                var parisDateParts = new Intl.DateTimeFormat('en-CA', {
-                    timeZone: 'Europe/Paris',
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit'
-                }).formatToParts(startJS);
+                        var endYear = startYear;
+                        var endMonth = startMonth;
+                        var endDay = startDay + 1;
 
-                var eventYear = parseInt(
-                    parisDateParts.find(p => p.type === 'year').value
-                );
+                        if (event.endDate) {
+                            endYear = event.endDate.year;
+                            endMonth = event.endDate.month;
+                            endDay = event.endDate.day;
+                        }
 
-                var eventMonth = parseInt(
-                    parisDateParts.find(p => p.type === 'month').value
-                );
+                        // DTEND est exclusif : on itère jusqu'à la veille.
+                        var cur = new Date(startYear, startMonth - 1, startDay, 12, 0, 0);
+                        var endExclusive = new Date(endYear, endMonth - 1, endDay, 12, 0, 0);
 
-                var eventDay = parseInt(
-                    parisDateParts.find(p => p.type === 'day').value
-                );
+                        while (cur < endExclusive) {
+                            var y = cur.getFullYear();
+                            var m = cur.getMonth() + 1;
+                            var d = cur.getDate();
+                            var key = dateKeyFromParts(y, m, d);
 
-                var eventDateOnly = new Date(
-                    eventYear,
-                    eventMonth - 1,
-                    eventDay
-                );
+                            if (key >= todayKey) {
+                                events.push({
+                                    summary: event.summary,
+                                    dateKey: key,
+                                    dateTitle: formatAllDayDate(y, m, d),
+                                    isAllDay: true,
+                                    calendarName: calName,
+                                    sortValue: key + 'T00:00:00'
+                                });
+                            }
 
-                if (eventDateOnly >= todayStart) {
-                    events.push({
-                        summary: event.summary,
-                        date: startJS,
-                        isAllDay: false,
-                        calendarName: calName
-                    });
-                }
+                            cur.setDate(cur.getDate() + 1);
+                        }
+
+                    } else {
+                        // =====================================================
+                        // ÉVÉNEMENT AVEC HEURE
+                        // =====================================================
+                        // Ici, toJSDate() est correct : l'événement représente
+                        // un instant réel. L'affichage sera ensuite forcé en
+                        // Europe/Paris.
+                        var startJS = event.startDate.toJSDate();
+                        var paris = getParisParts(startJS);
+                        var key = dateKeyFromParts(paris.year, paris.month, paris.day);
+
+                        if (key >= todayKey) {
+                            events.push({
+                                summary: event.summary,
+                                date: startJS,
+                                dateKey: key,
+                                dateTitle: new Date(
+                                    Number(paris.year),
+                                    Number(paris.month) - 1,
+                                    Number(paris.day),
+                                    12, 0, 0
+                                ).toLocaleDateString('fr-FR', {
+                                    day: 'numeric',
+                                    month: 'long',
+                                    weekday: 'long'
+                                }),
+                                isAllDay: false,
+                                calendarName: calName,
+                                sortValue: startJS.getTime()
+                            });
+                        }
+                    }
+                });
+
+                events.sort(function(a, b) {
+                    return a.sortValue < b.sortValue ? -1 :
+                           a.sortValue > b.sortValue ? 1 : 0;
+                });
+
+                renderCalendarEvents(events);
+
+            } catch (e) {
+                console.error('Erreur iCal:', e);
             }
-        });
-
-        // Tri chronologique
-        events.sort(function(a, b) {
-            return a.date - b.date;
-        });
-
-        renderCalendarEvents(events);
-
-    } catch (e) {
-        console.error("Erreur iCal:", e);
-    }
-}
+        }
 
         // Système d'attribution de couleurs fixes
         var assignedThemes = {
