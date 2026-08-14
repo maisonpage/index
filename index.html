@@ -419,6 +419,10 @@ function parseAndRenderCalendar(icsData) {
 
         vevents.forEach(function(vevent) {
             var event = new ICAL.Event(vevent);
+            console.log(
+    event.summary,
+    vevent.toString()
+);
 
             // --- NOM DU CALENDRIER ---
             var calNameProp = vevent.getFirstPropertyValue('x-calendar-name');
