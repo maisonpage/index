@@ -549,7 +549,9 @@
 
         setInterval(function() {
             if (!isTyping) {
-                location.reload();
+                fetchGoogleCalendar();
+                fetchWeather();
+                updateClock();
             }
         }, 15 * 60 * 1000);
 
@@ -557,7 +559,8 @@
             if (isTyping || (Date.now() - initialLoadTime < 10000)) return;
 
             updateClock();
-            location.reload();
+            fetchWeather();
+            fetchGoogleCalendar(); // Force le rechargement de l'agenda à la sortie de veille sans recharger toute la page
         }
 
         window.addEventListener('pageshow', refreshDashboardOnWake);
